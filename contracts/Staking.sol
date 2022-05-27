@@ -63,10 +63,9 @@ contract Staking is Ownable {
 
     function removeStake(uint256 _amount) public {
         uint256 bal = stakingBalance[msg.sender];
-        token.transfer(msg.sender, bal);
-
-        //Update the balance
+         //Update the balance
         stakingBalance[msg.sender] -= _amount;
+        token.transfer(msg.sender, bal);
         if (stakingBalance[msg.sender] == 0) removeStakeHolder(msg.sender);
     }
 
