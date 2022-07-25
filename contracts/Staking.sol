@@ -1,87 +1,88 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Unlicensed
 pragma solidity ^0.8.0;
 
-import "./mToken.sol";
+import "./library/Lib.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/utils/math/SafeMath.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "hardhat/console.sol";
+
+error InsufficientBalance();
+
+interface IRewardToken is IERC20 {
+    function mint(address addr, uint256 amount) external;
+}
 
 contract Staking is Ownable {
-    using SafeMath for uint256;
-    mToken public token;
+    using Lib for uint256;
+    IERC20 public token;
+    IRewardToken public reward;
+    uint256 public constant DURATION = 60 * 60 * 24;
 
-    constructor(mToken _token) {
-        token = _token;
+    // uint256 public constant AMOUNT_IN_WEI = 10**18;
+
+    constructor(address _token, address _reward) {
+        token = IERC20(_token);
+        reward = IRewardToken(_reward);
     }
 
-    //Address of the people staking
-    address[] public stakers;
-
-    //Staking balance
-    mapping(address => uint256) public stakingBalance;
-    //Reward balance
-    mapping(address => uint256) public rewardBalance;
-
-    // Using this function
-    function isStaking(address _stakingAddress)
-        internal
-        view
-        returns (bool, uint256)
-    {
-        for (uint256 i = 0; i < stakers.length; i++) {
-            if (stakers[i] == _stakingAddress) return (true, i);
-        }
-        return (false, 0);
+    struct StakeHolder {
+        uint256 tokenBalance;
+        uint256 rewardBalance;
+        uint256 lastTimeStamp;
     }
 
-    // Add the address to the stakers array
-    function addStakeHolder(address _addr) private {
-        (bool checkAddr, ) = isStaking(_addr);
-        if (!checkAddr) stakers.push(_addr);
+    mapping(address => StakeHolder) private _staker;
+
+    function accumulateReward(address account, uint256 tokenBalance) internal {
+        StakeHolder storage staker = _staker[account];
+        uint256 rewardRate = tokenBalance / 100;
+        staker.rewardBalance += staker.lastTimeStamp.calculate(
+            rewardRate,
+            DURATION
+        );
+        staker.lastTimeStamp = block.timestamp;
     }
 
     //Create staking
-    function createStake(uint256 _stake) public {
-        token.transferFrom(msg.sender, address(this), _stake);
-        if (stakingBalance[msg.sender] == 0) addStakeHolder(msg.sender);
-        stakingBalance[msg.sender] += _stake;
-    }
-
-    // Remove staker
-    function removeStakeHolder(address _addr) private {
-        (bool checkB, uint256 i) = isStaking(_addr);
-        if (checkB) stakers[i] = stakers[stakers.length - 1];
-        stakers.pop();
+    function createStake(uint256 amount) external {
+        StakeHolder storage staker = _staker[msg.sender];
+        if (amount > token.balanceOf(msg.sender)) revert InsufficientBalance();
+        token.transferFrom(msg.sender, address(this), amount);
+        staker.tokenBalance += amount;
+        console.log("Token Balance upon creating stake:", staker.tokenBalance);
+        accumulateReward(msg.sender, staker.tokenBalance);
     }
 
     //Send rewards to the users
-    function issueReward() public onlyOwner {
-        for (uint256 i = 0; i < stakers.length; i++) {
-            uint256 reward = stakingBalance[msg.sender] / 100;
-            rewardBalance[msg.sender] += reward;
-        }
+    function claimReward() public {
+        StakeHolder storage staker = _staker[msg.sender];
+        accumulateReward(msg.sender, staker.tokenBalance);
+        uint256 stakerReward = staker.rewardBalance;
+        if (stakerReward == 0) revert InsufficientBalance();
+        staker.rewardBalance = 0;
+        console.log("Amount of reward claimed:", stakerReward);
+        reward.mint(msg.sender, stakerReward);
     }
 
     function removeStake(uint256 _amount) public {
-        uint256 bal = stakingBalance[msg.sender];
-         //Update the balance
-        stakingBalance[msg.sender] -= _amount;
-        token.transfer(msg.sender, bal);
-        if (stakingBalance[msg.sender] == 0) removeStakeHolder(msg.sender);
-    }
-
-    // Get the total amount of stake
-    function getTotalStake() public view returns (uint256) {
-        uint256 totalStake = 0;
-        for (uint256 i = 0; i < stakers.length; i++) {
-            totalStake.add(stakingBalance[stakers[i]]);
+        StakeHolder storage staker = _staker[msg.sender];
+        if (_amount > staker.tokenBalance) revert InsufficientBalance();
+        uint256 tokenBalance = staker.tokenBalance;
+        staker.tokenBalance -= _amount;
+        accumulateReward(msg.sender, tokenBalance);
+        if (staker.tokenBalance == 0) {
+            staker.lastTimeStamp = 0;
         }
-        return totalStake;
+        token.transfer(msg.sender, _amount);
+        console.log("Balance left after removing stake:", staker.tokenBalance);
+        console.log("Reward balance is:", staker.rewardBalance);
     }
 
-    //Function to withdraw reward
-    function withdrawReward() public {
-        uint256 reward = rewardBalance[msg.sender];
-        rewardBalance[msg.sender] = 0;
-        token.transfer(msg.sender, reward);
+    function getRewardBalance(address account) external view returns (uint256) {
+        return _staker[account].rewardBalance;
+    }
+
+    function getTokenBalance(address account) external view returns (uint256) {
+        return _staker[account].tokenBalance;
     }
 }
