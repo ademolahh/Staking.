@@ -78,7 +78,7 @@ module.exports = {
   },
   etherscan: {
     apiKey: {
-      goerli: GOERLI_RPC_URL,
+      goerli: ETHERSCAN_API_KEY,
     },
   },
   mocha: {
